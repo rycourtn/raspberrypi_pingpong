@@ -1,2 +1,2 @@
-RPi.GPIO>=0.7.0
 pygame>=2.0.0
+flask>=2.0.0
