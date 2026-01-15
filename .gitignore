@@ -1,0 +1,17 @@
+# Virtual environments
+ping_pong_env/
+ping_pong_env_system/
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
