@@ -128,13 +128,13 @@ class PingPongDisplay:
     def setup_routes(self):
         @self.app.route('/score/player1', methods=['GET', 'POST'])
         def s1():
-            self.score(1)
-            return jsonify(status='ok', player=self.p1_name, score=self.p1_score)
+            self.score(2)  # Button 1 scores for Player 2
+            return jsonify(status='ok', player=self.p2_name, score=self.p2_score)
         
         @self.app.route('/score/player2', methods=['GET', 'POST'])
         def s2():
-            self.score(2)
-            return jsonify(status='ok', player=self.p2_name, score=self.p2_score)
+            self.score(1)  # Button 2 scores for Player 1
+            return jsonify(status='ok', player=self.p1_name, score=self.p1_score)
             
         @self.app.route('/reset', methods=['GET', 'POST'])
         def r():
