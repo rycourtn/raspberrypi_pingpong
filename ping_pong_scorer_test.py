@@ -1,414 +1,456 @@
 #!/usr/bin/env python3
 """
-Ping Pong Scoring System - TEST VERSION
-- Simulates GPIO buttons with keyboard keys
-- Works on any computer for testing
-- Press 'A' for Player 1, 'L' for Player 2
+Ping Pong Scorer - Pygame Display Version
+All touch/click controls - no keyboard needed during game
 """
-
-import tkinter as tk
-from tkinter import ttk, messagebox
 import pygame
 import threading
-import time
-import os
 
-class PingPongScorerTest:
+# Colors - Purple and Pink theme
+C_P1_BG = (128, 0, 128)    # Purple
+C_P2_BG = (255, 20, 147)   # Deep Pink
+C_DARK = (30, 20, 40)      # Dark purple background
+C_WHITE = (255, 255, 255)
+C_GOLD = (255, 215, 0)
+C_FLASH_P1 = (200, 150, 255)  # Light purple flash
+C_FLASH_P2 = (255, 150, 200)  # Light pink flash
+C_GREEN = (39, 174, 96)
+C_ORANGE = (243, 156, 18)
+C_GRAY = (80, 80, 80)
+
+try:
+    from flask import Flask, jsonify
+    FLASK_ENABLED = True
+except ImportError:
+    FLASK_ENABLED = False
+    print("Flask not available - HTTP disabled")
+
+# Player name options
+PLAYER_NAMES = ["Ryan", "Ethan", "Ben", "Guest"]
+
+class PingPongDisplay:
     def __init__(self):
-        # Initialize pygame for sound
-        try:
-            pygame.mixer.init()
-            self.sound_enabled = True
-        except:
-            print("Sound not available - continuing without audio")
-            self.sound_enabled = False
+        pygame.init()
         
-        # Game state
-        self.player1_name = "Player 1"
-        self.player2_name = "Player 2"
-        self.player1_score = 0
-        self.player2_score = 0
-        self.serving_player = 1  # 1 or 2
+        # Setup Screen
+        self.W, self.H = 800, 600
+        self.screen = pygame.display.set_mode((self.W, self.H), pygame.RESIZABLE)
+        pygame.display.set_caption("Ping Pong Scorer")
+        
+        # Game State
+        self.p1_name = PLAYER_NAMES[0]
+        self.p2_name = PLAYER_NAMES[1]
+        self.p1_score = 0
+        self.p2_score = 0
+        self.serving = 1
+        self.points_serve = 0
         self.game_started = False
         self.game_over = False
-        self.points_to_serve = 0  # Track points for serve changes
         
-        # Create main window
-        self.root = tk.Tk()
-        self.root.title("Ping Pong Scorer - TEST MODE")
-        self.root.geometry("800x600")
-        self.root.configure(bg='#2c3e50')
+        # Game Settings
+        self.points_to_win = 11
+        self.serves_per_turn = 2
         
-        # Don't start fullscreen in test mode
-        # self.root.attributes('-fullscreen', True)
+        # Selection indices
+        self.p1_name_idx = 0
+        self.p2_name_idx = 1
         
-        self.setup_gui()
-        self.setup_keyboard_bindings()
+        # Flash animation
+        self.flash_alpha_p1 = 0
+        self.flash_alpha_p2 = 0
         
-    def setup_gui(self):
-        """Setup the GUI interface"""
-        # Main container
-        main_frame = tk.Frame(self.root, bg='#2c3e50')
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        # Fonts
+        self.font_score = pygame.font.Font(None, 150)
+        self.font_name = pygame.font.Font(None, 40)
+        self.font_serve = pygame.font.Font(None, 30)
+        self.font_title = pygame.font.Font(None, 50)
+        self.font_button = pygame.font.Font(None, 35)
+        self.font_small = pygame.font.Font(None, 28)
         
-        # Title with test mode indicator
-        title_label = tk.Label(main_frame, text="🏓 PING PONG SCORER - TEST MODE 🏓", 
-                              font=('Arial', 20, 'bold'), 
-                              fg='#f39c12', bg='#2c3e50')
-        title_label.pack(pady=(0, 10))
+        # Web Server
+        if FLASK_ENABLED:
+            self.app = Flask(__name__)
+            self.setup_routes()
+            self.start_flask()
+
+    def setup_routes(self):
+        @self.app.route('/score/player1', methods=['GET', 'POST'])
+        def s1():
+            self.score(1)
+            return jsonify(status='ok', score=self.p1_score)
         
-        # Test instructions
-        test_info = tk.Label(main_frame, text="Press 'A' for Player 1 • Press 'L' for Player 2", 
-                            font=('Arial', 12, 'bold'), 
-                            fg='#e74c3c', bg='#2c3e50')
-        test_info.pack(pady=(0, 20))
+        @self.app.route('/score/player2', methods=['GET', 'POST'])
+        def s2():
+            self.score(2)
+            return jsonify(status='ok', score=self.p2_score)
+            
+        @self.app.route('/reset', methods=['GET', 'POST'])
+        def r():
+            self.reset_game()
+            return jsonify(status='ok')
         
-        # Player setup frame (shown before game starts)
-        self.setup_frame = tk.Frame(main_frame, bg='#2c3e50')
-        self.setup_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Player name inputs
-        tk.Label(self.setup_frame, text="Enter Player Names:", 
-                font=('Arial', 18, 'bold'), fg='#ecf0f1', bg='#2c3e50').pack(pady=20)
-        
-        input_frame = tk.Frame(self.setup_frame, bg='#2c3e50')
-        input_frame.pack(pady=20)
-        
-        tk.Label(input_frame, text="Player 1 (Press 'A'):", 
-                font=('Arial', 14), fg='#ecf0f1', bg='#2c3e50').grid(row=0, column=0, padx=10, pady=10)
-        self.player1_entry = tk.Entry(input_frame, font=('Arial', 14), width=20)
-        self.player1_entry.grid(row=0, column=1, padx=10, pady=10)
-        self.player1_entry.insert(0, self.player1_name)
-        
-        tk.Label(input_frame, text="Player 2 (Press 'L'):", 
-                font=('Arial', 14), fg='#ecf0f1', bg='#2c3e50').grid(row=1, column=0, padx=10, pady=10)
-        self.player2_entry = tk.Entry(input_frame, font=('Arial', 14), width=20)
-        self.player2_entry.grid(row=1, column=1, padx=10, pady=10)
-        self.player2_entry.insert(0, self.player2_name)
-        
-        # Start game button
-        start_btn = tk.Button(self.setup_frame, text="START GAME", 
-                             font=('Arial', 16, 'bold'), 
-                             bg='#27ae60', fg='white',
-                             command=self.start_game, 
-                             padx=30, pady=15)
-        start_btn.pack(pady=30)
-        
-        # Test buttons for clicking
-        test_btn_frame = tk.Frame(self.setup_frame, bg='#2c3e50')
-        test_btn_frame.pack(pady=20)
-        
-        tk.Label(test_btn_frame, text="Or click these test buttons:", 
-                font=('Arial', 12), fg='#bdc3c7', bg='#2c3e50').pack(pady=(0, 10))
-        
-        test_p1_btn = tk.Button(test_btn_frame, text="Player 1 Score (A)", 
-                               font=('Arial', 12), bg='#3498db', fg='white',
-                               command=self.player1_scored_test, padx=20, pady=10)
-        test_p1_btn.pack(side=tk.LEFT, padx=10)
-        
-        test_p2_btn = tk.Button(test_btn_frame, text="Player 2 Score (L)", 
-                               font=('Arial', 12), bg='#e74c3c', fg='white',
-                               command=self.player2_scored_test, padx=20, pady=10)
-        test_p2_btn.pack(side=tk.LEFT, padx=10)
-        
-        # Game frame (shown during game)
-        self.game_frame = tk.Frame(main_frame, bg='#2c3e50')
-        
-        # Score display
-        score_frame = tk.Frame(self.game_frame, bg='#2c3e50')
-        score_frame.pack(fill=tk.X, pady=30)
-        
-        # Player 1 score section
-        p1_frame = tk.Frame(score_frame, bg='#3498db', relief=tk.RAISED, bd=3)
-        p1_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
-        
-        self.player1_label = tk.Label(p1_frame, text=self.player1_name, 
-                                     font=('Arial', 20, 'bold'), 
-                                     fg='white', bg='#3498db')
-        self.player1_label.pack(pady=10)
-        
-        self.player1_score_label = tk.Label(p1_frame, text="0", 
-                                           font=('Arial', 72, 'bold'), 
-                                           fg='white', bg='#3498db')
-        self.player1_score_label.pack(pady=20)
-        
-        self.player1_serve_label = tk.Label(p1_frame, text="", 
-                                           font=('Arial', 16, 'bold'), 
-                                           fg='#f1c40f', bg='#3498db')
-        self.player1_serve_label.pack(pady=(0, 10))
-        
-        # VS label
-        vs_label = tk.Label(score_frame, text="VS", 
-                           font=('Arial', 24, 'bold'), 
-                           fg='#ecf0f1', bg='#2c3e50')
-        vs_label.pack(side=tk.LEFT, padx=20)
-        
-        # Player 2 score section
-        p2_frame = tk.Frame(score_frame, bg='#e74c3c', relief=tk.RAISED, bd=3)
-        p2_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0))
-        
-        self.player2_label = tk.Label(p2_frame, text=self.player2_name, 
-                                     font=('Arial', 20, 'bold'), 
-                                     fg='white', bg='#e74c3c')
-        self.player2_label.pack(pady=10)
-        
-        self.player2_score_label = tk.Label(p2_frame, text="0", 
-                                           font=('Arial', 72, 'bold'), 
-                                           fg='white', bg='#e74c3c')
-        self.player2_score_label.pack(pady=20)
-        
-        self.player2_serve_label = tk.Label(p2_frame, text="", 
-                                           font=('Arial', 16, 'bold'), 
-                                           fg='#f1c40f', bg='#e74c3c')
-        self.player2_serve_label.pack(pady=(0, 10))
-        
-        # Game controls
-        controls_frame = tk.Frame(self.game_frame, bg='#2c3e50')
-        controls_frame.pack(pady=30)
-        
-        reset_btn = tk.Button(controls_frame, text="RESET GAME", 
-                             font=('Arial', 14, 'bold'), 
-                             bg='#f39c12', fg='white',
-                             command=self.reset_game, 
-                             padx=20, pady=10)
-        reset_btn.pack(side=tk.LEFT, padx=10)
-        
-        new_game_btn = tk.Button(controls_frame, text="NEW GAME", 
-                                font=('Arial', 14, 'bold'), 
-                                bg='#9b59b6', fg='white',
-                                command=self.new_game, 
-                                padx=20, pady=10)
-        new_game_btn.pack(side=tk.LEFT, padx=10)
-        
-        exit_btn = tk.Button(controls_frame, text="EXIT", 
-                            font=('Arial', 14, 'bold'), 
-                            bg='#e74c3c', fg='white',
-                            command=self.exit_app, 
-                            padx=20, pady=10)
-        exit_btn.pack(side=tk.LEFT, padx=10)
-        
-        # Test mode instructions during game
-        test_instructions = tk.Label(self.game_frame, 
-                                    text="TEST MODE: Press 'A' for Player 1 • Press 'L' for Player 2 • Or use buttons below", 
-                                    font=('Arial', 12), 
-                                    fg='#f39c12', bg='#2c3e50')
-        test_instructions.pack(pady=10)
-        
-        # Test buttons during game
-        game_test_frame = tk.Frame(self.game_frame, bg='#2c3e50')
-        game_test_frame.pack(pady=10)
-        
-        self.game_test_p1_btn = tk.Button(game_test_frame, text="Player 1 Score (A)", 
-                                         font=('Arial', 12), bg='#3498db', fg='white',
-                                         command=self.player1_scored_test, padx=20, pady=10)
-        self.game_test_p1_btn.pack(side=tk.LEFT, padx=10)
-        
-        self.game_test_p2_btn = tk.Button(game_test_frame, text="Player 2 Score (L)", 
-                                         font=('Arial', 12), bg='#e74c3c', fg='white',
-                                         command=self.player2_scored_test, padx=20, pady=10)
-        self.game_test_p2_btn.pack(side=tk.LEFT, padx=10)
-        
-    def setup_keyboard_bindings(self):
-        """Setup keyboard bindings for testing"""
-        self.root.bind('<KeyPress-a>', lambda e: self.player1_scored_test())
-        self.root.bind('<KeyPress-A>', lambda e: self.player1_scored_test())
-        self.root.bind('<KeyPress-l>', lambda e: self.player2_scored_test())
-        self.root.bind('<KeyPress-L>', lambda e: self.player2_scored_test())
-        
-        # Make sure the window can receive key events
-        self.root.focus_set()
-        
-    def start_game(self):
-        """Start the game with selected players"""
-        self.player1_name = self.player1_entry.get().strip() or "Player 1"
-        self.player2_name = self.player2_entry.get().strip() or "Player 2"
-        
-        # Update labels
-        self.player1_label.config(text=self.player1_name)
-        self.player2_label.config(text=self.player2_name)
-        
-        # Update test button labels
-        self.game_test_p1_btn.config(text=f"{self.player1_name} Score (A)")
-        self.game_test_p2_btn.config(text=f"{self.player2_name} Score (L)")
-        
-        # Switch to game view
-        self.setup_frame.pack_forget()
-        self.game_frame.pack(fill=tk.BOTH, expand=True)
-        
-        self.game_started = True
-        self.serving_player = 1  # Player 1 serves first
-        self.update_serve_display()
-        
-        # Play start sound
-        self.play_sound('start')
-        
-        # Ensure window can still receive key events
-        self.root.focus_set()
-        
-    def player1_scored_test(self):
-        """Handle Player 1 scoring (test version)"""
-        if not self.game_started or self.game_over:
+        @self.app.route('/status', methods=['GET'])
+        def status():
+            return jsonify(
+                p1_score=self.p1_score, 
+                p2_score=self.p2_score,
+                serving=self.serving,
+                game_over=self.game_over
+            )
+
+        @self.app.route('/')
+        def remote():
+            return f'''
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    body {{ display:flex; flex-direction:column; margin:0; height:100vh; background:#1e1428; font-family:Arial; }}
+                    h1 {{ color:white; text-align:center; padding:20px; margin:0; }}
+                    .buttons {{ display:flex; flex:1; gap:10px; padding:10px; }}
+                    .btn {{ flex:1; border:none; border-radius:15px; font-size:24px; font-weight:bold; color:white; cursor:pointer; }}
+                    .p1 {{ background:#800080; }}
+                    .p2 {{ background:#ff1493; }}
+                    .reset {{ background:#f39c12; margin:10px; padding:20px; border-radius:10px; }}
+                    .status {{ color:#bdc3c7; text-align:center; padding:15px; font-size:18px; }}
+                </style>
+            </head>
+            <body>
+                <h1>🏓 Ping Pong Remote</h1>
+                <div class="buttons">
+                    <button class="btn p1" onclick="score(1)">{self.p1_name}</button>
+                    <button class="btn p2" onclick="score(2)">{self.p2_name}</button>
+                </div>
+                <button class="btn reset" onclick="reset()">Reset Game</button>
+                <div class="status" id="status">Tap player to score</div>
+                <script>
+                    function score(p) {{ 
+                        fetch('/score/player'+p, {{method:'POST'}})
+                            .then(r=>r.json())
+                            .then(d=>document.getElementById('status').textContent='Score: '+d.score); 
+                    }}
+                    function reset() {{ 
+                        fetch('/reset', {{method:'POST'}})
+                            .then(()=>document.getElementById('status').textContent='Game reset!'); 
+                    }}
+                </script>
+            </body>
+            </html>
+            '''
+
+    def start_flask(self):
+        t = threading.Thread(
+            target=lambda: self.app.run(host='0.0.0.0', port=8080, use_reloader=False, threaded=True), 
+            daemon=True
+        )
+        t.start()
+
+    def score(self, player):
+        if self.game_over or not self.game_started:
             return
-            
-        self.player1_score += 1
-        self.points_to_serve += 1
-        self.update_score_display()
-        self.check_serve_change()
-        self.check_game_over()
-        self.play_sound('score')
-        print(f"Player 1 ({self.player1_name}) scored! Score: {self.player1_score}")
         
-    def player2_scored_test(self):
-        """Handle Player 2 scoring (test version)"""
-        if not self.game_started or self.game_over:
-            return
-            
-        self.player2_score += 1
-        self.points_to_serve += 1
-        self.update_score_display()
-        self.check_serve_change()
-        self.check_game_over()
-        self.play_sound('score')
-        print(f"Player 2 ({self.player2_name}) scored! Score: {self.player2_score}")
-        
-    def update_score_display(self):
-        """Update the score display"""
-        self.player1_score_label.config(text=str(self.player1_score))
-        self.player2_score_label.config(text=str(self.player2_score))
-        
-    def check_serve_change(self):
-        """Check if serve should change (every 2 points in standard ping pong)"""
-        if self.points_to_serve >= 2:
-            self.serving_player = 2 if self.serving_player == 1 else 1
-            self.points_to_serve = 0
-            self.update_serve_display()
-            print(f"Serve changed to {self.player1_name if self.serving_player == 1 else self.player2_name}")
-            
-    def update_serve_display(self):
-        """Update the serving indicator"""
-        if self.serving_player == 1:
-            self.player1_serve_label.config(text="🏓 SERVING")
-            self.player2_serve_label.config(text="")
+        if player == 1:
+            self.p1_score += 1
+            self.flash_alpha_p1 = 255
         else:
-            self.player1_serve_label.config(text="")
-            self.player2_serve_label.config(text="🏓 SERVING")
+            self.p2_score += 1
+            self.flash_alpha_p2 = 255
             
-    def check_game_over(self):
-        """Check if game is over (first to 11, win by 2)"""
-        if (self.player1_score >= 11 or self.player2_score >= 11):
-            if abs(self.player1_score - self.player2_score) >= 2:
-                self.game_over = True
-                winner = self.player1_name if self.player1_score > self.player2_score else self.player2_name
-                self.play_sound('win')
-                print(f"Game Over! {winner} wins!")
-                messagebox.showinfo("Game Over!", f"🏆 {winner} Wins!\n\nFinal Score:\n{self.player1_name}: {self.player1_score}\n{self.player2_name}: {self.player2_score}")
-                
-    def play_sound(self, sound_type):
-        """Play sound effects"""
-        if not self.sound_enabled:
-            return
+        print(f"{'P1' if player == 1 else 'P2'} scored! {self.p1_score}-{self.p2_score}")
+        
+        # Serve Logic
+        self.points_serve += 1
+        deuce = (self.p1_score >= self.points_to_win - 1 and self.p2_score >= self.points_to_win - 1)
+        threshold = 1 if deuce else self.serves_per_turn
+        if self.points_serve >= threshold:
+            self.serving = 2 if self.serving == 1 else 1
+            self.points_serve = 0
             
-        try:
-            if sound_type == 'score':
-                # Create a simple beep sound
-                self.create_beep_sound(440, 0.1)  # 440Hz for 0.1 seconds
-            elif sound_type == 'start':
-                # Create a start game sound
-                self.create_beep_sound(523, 0.2)  # C note
-            elif sound_type == 'win':
-                # Create a victory sound
-                for freq in [523, 659, 784]:  # C-E-G chord
-                    self.create_beep_sound(freq, 0.3)
-                    time.sleep(0.1)
-        except Exception as e:
-            print(f"Sound error: {e}")
-            
-    def create_beep_sound(self, frequency, duration):
-        """Create and play a beep sound"""
-        try:
-            # Generate a simple sine wave
-            sample_rate = 22050
-            frames = int(duration * sample_rate)
-            arr = []
-            for i in range(frames):
-                wave = 4096 * (i % (sample_rate // frequency) < (sample_rate // frequency) // 2) - 2048
-                arr.append([wave, wave])
-            
-            sound = pygame.sndarray.make_sound(pygame.array.array('h', arr))
-            sound.play()
-            time.sleep(duration)
-        except Exception as e:
-            print(f"Beep sound error: {e}")
-            
+        # Win Logic
+        if (self.p1_score >= self.points_to_win or self.p2_score >= self.points_to_win) and abs(self.p1_score - self.p2_score) >= 2:
+            self.game_over = True
+            winner = self.p1_name if self.p1_score > self.p2_score else self.p2_name
+            print(f"Game Over! {winner} wins!")
+
     def reset_game(self):
-        """Reset the current game scores"""
-        self.player1_score = 0
-        self.player2_score = 0
-        self.serving_player = 1
-        self.points_to_serve = 0
+        self.p1_score = 0
+        self.p2_score = 0
+        self.serving = 1
+        self.points_serve = 0
         self.game_over = False
-        self.update_score_display()
-        self.update_serve_display()
-        self.play_sound('start')
         print("Game reset!")
+
+    def start_game(self):
+        self.p1_name = PLAYER_NAMES[self.p1_name_idx]
+        self.p2_name = PLAYER_NAMES[self.p2_name_idx]
+        self.game_started = True
+        self.reset_game()
+
+    def draw_button(self, rect, text, color, text_color=C_WHITE, selected=False):
+        """Draw a clickable button"""
+        if selected:
+            pygame.draw.rect(self.screen, color, rect, border_radius=8)
+        else:
+            pygame.draw.rect(self.screen, C_GRAY, rect, border_radius=8)
+            pygame.draw.rect(self.screen, color, rect, 3, border_radius=8)
         
-    def new_game(self):
-        """Start a completely new game with player selection"""
-        self.game_started = False
-        self.game_over = False
-        self.player1_score = 0
-        self.player2_score = 0
-        self.serving_player = 1
-        self.points_to_serve = 0
+        txt = self.font_button.render(text, True, text_color if selected else color)
+        self.screen.blit(txt, (rect.centerx - txt.get_width()//2, rect.centery - txt.get_height()//2))
+        return rect
+
+    def draw_setup(self):
+        self.screen.fill(C_DARK)
         
-        # Switch back to setup view
-        self.game_frame.pack_forget()
-        self.setup_frame.pack(fill=tk.BOTH, expand=True)
-        self.root.focus_set()
-        print("Starting new game...")
+        # Title
+        title = self.font_title.render("PING PONG SCORER", True, C_WHITE)
+        self.screen.blit(title, (self.W//2 - title.get_width()//2, 20))
         
-    def exit_app(self):
-        """Exit the application"""
-        self.cleanup()
-        self.root.quit()
+        # Store button rects for click detection
+        self.setup_buttons = {}
         
-    def cleanup(self):
-        """Clean up pygame"""
-        try:
-            if self.sound_enabled:
-                pygame.mixer.quit()
-        except Exception as e:
-            print(f"Cleanup error: {e}")
+        btn_w = 120
+        btn_h = 50
+        spacing = 10
+        
+        # Player 1 Selection
+        y = 90
+        p1_label = self.font_name.render("Player 1:", True, C_P1_BG)
+        self.screen.blit(p1_label, (50, y + 10))
+        
+        for i, name in enumerate(PLAYER_NAMES):
+            x = 200 + i * (btn_w + spacing)
+            rect = pygame.Rect(x, y, btn_w, btn_h)
+            self.draw_button(rect, name, C_P1_BG, selected=(i == self.p1_name_idx))
+            self.setup_buttons[f"p1_{i}"] = rect
+        
+        # Player 2 Selection
+        y = 160
+        p2_label = self.font_name.render("Player 2:", True, C_P2_BG)
+        self.screen.blit(p2_label, (50, y + 10))
+        
+        for i, name in enumerate(PLAYER_NAMES):
+            x = 200 + i * (btn_w + spacing)
+            rect = pygame.Rect(x, y, btn_w, btn_h)
+            self.draw_button(rect, name, C_P2_BG, selected=(i == self.p2_name_idx))
+            self.setup_buttons[f"p2_{i}"] = rect
+        
+        # Points to Win
+        y = 250
+        pts_label = self.font_name.render("Points to Win:", True, C_GOLD)
+        self.screen.blit(pts_label, (50, y + 10))
+        
+        for i, pts in enumerate([7, 11, 21]):
+            x = 250 + i * (btn_w + spacing)
+            rect = pygame.Rect(x, y, btn_w, btn_h)
+            self.draw_button(rect, str(pts), C_GOLD, C_DARK, selected=(self.points_to_win == pts))
+            self.setup_buttons[f"pts_{pts}"] = rect
+        
+        # Serves per Turn
+        y = 320
+        srv_label = self.font_name.render("Serves/Turn:", True, C_GOLD)
+        self.screen.blit(srv_label, (50, y + 10))
+        
+        for i, srv in enumerate([1, 2, 5]):
+            x = 250 + i * (btn_w + spacing)
+            rect = pygame.Rect(x, y, btn_w, btn_h)
+            self.draw_button(rect, str(srv), C_GOLD, C_DARK, selected=(self.serves_per_turn == srv))
+            self.setup_buttons[f"srv_{srv}"] = rect
+        
+        # Start Button
+        start_rect = pygame.Rect(self.W//2 - 150, 410, 300, 80)
+        pygame.draw.rect(self.screen, C_GREEN, start_rect, border_radius=15)
+        start_text = self.font_title.render("START GAME", True, C_WHITE)
+        self.screen.blit(start_text, (start_rect.centerx - start_text.get_width()//2, 
+                                      start_rect.centery - start_text.get_height()//2))
+        self.setup_buttons["start"] = start_rect
+        
+        # Preview
+        preview = self.font_small.render(f"{PLAYER_NAMES[self.p1_name_idx]} vs {PLAYER_NAMES[self.p2_name_idx]} • First to {self.points_to_win} • {self.serves_per_turn} serve(s)/turn", True, (150, 150, 150))
+        self.screen.blit(preview, (self.W//2 - preview.get_width()//2, 510))
+        
+        if FLASK_ENABLED:
+            url = self.font_small.render("Remote: http://localhost:8080", True, C_GOLD)
+            self.screen.blit(url, (self.W//2 - url.get_width()//2, 550))
+
+    def draw_game(self):
+        # Score areas (clickable)
+        self.game_buttons = {}
+        
+        # Left half (P1) - Purple - CLICKABLE TO SCORE
+        p1_rect = pygame.Rect(0, 0, self.W//2, self.H - 80)
+        pygame.draw.rect(self.screen, C_P1_BG, p1_rect)
+        self.game_buttons["score_p1"] = p1_rect
+        
+        # Right half (P2) - Pink - CLICKABLE TO SCORE
+        p2_rect = pygame.Rect(self.W//2, 0, self.W//2, self.H - 80)
+        pygame.draw.rect(self.screen, C_P2_BG, p2_rect)
+        self.game_buttons["score_p2"] = p2_rect
+        
+        center_p1 = self.W // 4
+        center_p2 = (self.W // 4) * 3
+        
+        # Names
+        n1 = self.font_name.render(self.p1_name.upper(), True, C_WHITE)
+        self.screen.blit(n1, (center_p1 - n1.get_width()//2, 30))
+        
+        n2 = self.font_name.render(self.p2_name.upper(), True, C_WHITE)
+        self.screen.blit(n2, (center_p2 - n2.get_width()//2, 30))
+        
+        # Tap hint
+        tap1 = self.font_small.render("TAP TO SCORE", True, (200, 180, 220))
+        self.screen.blit(tap1, (center_p1 - tap1.get_width()//2, 70))
+        
+        tap2 = self.font_small.render("TAP TO SCORE", True, (255, 180, 200))
+        self.screen.blit(tap2, (center_p2 - tap2.get_width()//2, 70))
+        
+        # Scores
+        score_color_p1 = C_GOLD if self.game_over and self.p1_score > self.p2_score else C_WHITE
+        score_color_p2 = C_GOLD if self.game_over and self.p2_score > self.p1_score else C_WHITE
+        
+        s1 = self.font_score.render(str(self.p1_score), True, score_color_p1)
+        self.screen.blit(s1, (center_p1 - s1.get_width()//2, self.H//2 - s1.get_height()//2 - 20))
+        
+        s2 = self.font_score.render(str(self.p2_score), True, score_color_p2)
+        self.screen.blit(s2, (center_p2 - s2.get_width()//2, self.H//2 - s2.get_height()//2 - 20))
+        
+        # Serve indicator
+        if not self.game_over:
+            serve_text = self.font_serve.render("● SERVING", True, C_GOLD)
+            if self.serving == 1:
+                self.screen.blit(serve_text, (center_p1 - serve_text.get_width()//2, self.H - 130))
+            else:
+                self.screen.blit(serve_text, (center_p2 - serve_text.get_width()//2, self.H - 130))
+        
+        # Flash effects
+        if self.flash_alpha_p1 > 0:
+            flash_surface = pygame.Surface((self.W//2, self.H - 80))
+            flash_surface.fill(C_FLASH_P1)
+            flash_surface.set_alpha(self.flash_alpha_p1)
+            self.screen.blit(flash_surface, (0, 0))
+            self.flash_alpha_p1 = max(0, self.flash_alpha_p1 - 15)
             
+        if self.flash_alpha_p2 > 0:
+            flash_surface = pygame.Surface((self.W//2, self.H - 80))
+            flash_surface.fill(C_FLASH_P2)
+            flash_surface.set_alpha(self.flash_alpha_p2)
+            self.screen.blit(flash_surface, (self.W//2, 0))
+            self.flash_alpha_p2 = max(0, self.flash_alpha_p2 - 15)
+        
+        # Bottom control bar
+        pygame.draw.rect(self.screen, C_DARK, (0, self.H - 80, self.W, 80))
+        
+        # Control buttons
+        btn_w = 150
+        btn_h = 50
+        y = self.H - 65
+        
+        if self.game_over:
+            # Winner message
+            winner = self.p1_name if self.p1_score > self.p2_score else self.p2_name
+            win_text = self.font_name.render(f"🏆 {winner} WINS! 🏆", True, C_GOLD)
+            self.screen.blit(win_text, (self.W//2 - win_text.get_width()//2, y - 10))
+        
+        # Reset button
+        reset_rect = pygame.Rect(20, y, btn_w, btn_h)
+        pygame.draw.rect(self.screen, C_ORANGE, reset_rect, border_radius=8)
+        reset_txt = self.font_button.render("RESET", True, C_WHITE)
+        self.screen.blit(reset_txt, (reset_rect.centerx - reset_txt.get_width()//2, reset_rect.centery - reset_txt.get_height()//2))
+        self.game_buttons["reset"] = reset_rect
+        
+        # New Game button
+        new_rect = pygame.Rect(self.W - 170, y, btn_w, btn_h)
+        pygame.draw.rect(self.screen, C_P1_BG, new_rect, border_radius=8)
+        new_txt = self.font_button.render("NEW GAME", True, C_WHITE)
+        self.screen.blit(new_txt, (new_rect.centerx - new_txt.get_width()//2, new_rect.centery - new_txt.get_height()//2))
+        self.game_buttons["new_game"] = new_rect
+        
+        # Game info
+        info = self.font_small.render(f"First to {self.points_to_win}", True, (150, 150, 150))
+        self.screen.blit(info, (self.W//2 - info.get_width()//2, y + 10))
+
+    def handle_setup_click(self, pos):
+        for key, rect in self.setup_buttons.items():
+            if rect.collidepoint(pos):
+                if key.startswith("p1_"):
+                    self.p1_name_idx = int(key.split("_")[1])
+                elif key.startswith("p2_"):
+                    self.p2_name_idx = int(key.split("_")[1])
+                elif key.startswith("pts_"):
+                    self.points_to_win = int(key.split("_")[1])
+                elif key.startswith("srv_"):
+                    self.serves_per_turn = int(key.split("_")[1])
+                elif key == "start":
+                    self.start_game()
+                return
+
+    def handle_game_click(self, pos):
+        for key, rect in self.game_buttons.items():
+            if rect.collidepoint(pos):
+                if key == "score_p1" and not self.game_over:
+                    self.score(1)
+                elif key == "score_p2" and not self.game_over:
+                    self.score(2)
+                elif key == "reset":
+                    self.reset_game()
+                elif key == "new_game":
+                    self.game_started = False
+                    self.game_over = False
+                return
+
     def run(self):
-        """Run the application"""
-        try:
-            # Bind F11 to toggle fullscreen for testing
-            self.root.bind('<F11>', lambda e: self.root.attributes('-fullscreen', not self.root.attributes('-fullscreen')))
-            self.root.bind('<Escape>', lambda e: self.root.attributes('-fullscreen', False))
+        clock = pygame.time.Clock()
+        running = True
+        
+        print("\n🏓 Ping Pong Scorer - TOUCH/CLICK MODE")
+        print("All controls are clickable buttons!")
+        if FLASK_ENABLED:
+            print("Remote: http://localhost:8080")
+        print()
+        
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                    
+                elif event.type == pygame.VIDEORESIZE:
+                    self.W, self.H = event.w, event.h
+                    self.screen = pygame.display.set_mode((self.W, self.H), pygame.RESIZABLE)
+                    
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if self.game_started:
+                        self.handle_game_click(event.pos)
+                    else:
+                        self.handle_setup_click(event.pos)
+                        
+                elif event.type == pygame.KEYDOWN:
+                    # Keyboard shortcuts still work
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key == pygame.K_F11:
+                        pygame.display.toggle_fullscreen()
+                    elif self.game_started:
+                        if event.key == pygame.K_a:
+                            self.score(1)
+                        elif event.key == pygame.K_l:
+                            self.score(2)
+                        elif event.key == pygame.K_r:
+                            self.reset_game()
+                        elif event.key == pygame.K_n:
+                            self.game_started = False
+                            self.game_over = False
+
+            # Draw
+            if self.game_started:
+                self.draw_game()
+            else:
+                self.draw_setup()
+                
+            pygame.display.flip()
+            clock.tick(60)
             
-            # Handle window close
-            self.root.protocol("WM_DELETE_WINDOW", self.exit_app)
-            
-            print("=== PING PONG SCORER TEST MODE ===")
-            print("Controls:")
-            print("  - Press 'A' key for Player 1 score")
-            print("  - Press 'L' key for Player 2 score")
-            print("  - Or click the test buttons")
-            print("  - F11 to toggle fullscreen")
-            print("  - Escape to exit fullscreen")
-            print("=====================================")
-            
-            # Start the GUI
-            self.root.mainloop()
-        except KeyboardInterrupt:
-            print("Application interrupted")
-        finally:
-            self.cleanup()
+        pygame.quit()
 
 if __name__ == "__main__":
-    try:
-        app = PingPongScorerTest()
-        app.run()
-    except Exception as e:
-        print(f"Application error: {e}")
+    game = PingPongDisplay()
+    game.run()

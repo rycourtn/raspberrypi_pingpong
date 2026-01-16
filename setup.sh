@@ -1,30 +1,28 @@
 #!/bin/bash
-# Setup script for Ping Pong Scorer
+# Setup script for Ping Pong Scorer on Raspberry Pi
 
-echo "Setting up Ping Pong Scorer..."
+echo "🏓 Setting up Ping Pong Scorer..."
 
 # Update system
+echo "Updating system packages..."
 sudo apt update
 
-# Install Python dependencies
-echo "Installing Python packages..."
-pip3 install -r requirements.txt
-
-# Install system audio dependencies for pygame
-echo "Installing system audio dependencies..."
-sudo apt install -y python3-pygame alsa-utils
+# Install system dependencies
+echo "Installing system dependencies..."
+sudo apt install -y python3-pygame python3-flask alsa-utils
 
 # Make the main script executable
 chmod +x ping_pong_scorer.py
 
 # Create desktop shortcut
 echo "Creating desktop shortcut..."
+mkdir -p ~/Desktop
 cat > ~/Desktop/PingPongScorer.desktop << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
 Name=Ping Pong Scorer
-Comment=GPIO-based ping pong scoring system
+Comment=Ping pong scoring system
 Exec=python3 $(pwd)/ping_pong_scorer.py
 Icon=applications-games
 Terminal=false
@@ -33,6 +31,11 @@ EOF
 
 chmod +x ~/Desktop/PingPongScorer.desktop
 
-echo "Setup complete!"
-echo "You can now run the scorer with: python3 ping_pong_scorer.py"
-echo "Or use the desktop shortcut: Ping Pong Scorer"
+echo ""
+echo "✅ Setup complete!"
+echo ""
+echo "To run the scorer:"
+echo "  python3 ping_pong_scorer.py"
+echo ""
+echo "Or double-click 'Ping Pong Scorer' on your desktop"
+echo ""
