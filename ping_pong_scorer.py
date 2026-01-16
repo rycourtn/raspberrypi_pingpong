@@ -197,7 +197,7 @@ class PingPongDisplay:
 
     def start_flask(self):
         t = threading.Thread(
-            target=lambda: self.app.run(host='0.0.0.0', port=8080, use_reloader=False, threaded=True), 
+            target=lambda: self.app.run(host='0.0.0.0', port=5000, use_reloader=False, threaded=True), 
             daemon=True
         )
         t.start()
@@ -331,7 +331,7 @@ class PingPongDisplay:
         self.screen.blit(preview, (self.W//2 - preview.get_width()//2, int(self.H * 0.85)))
         
         # URL info
-        url = self.font_small.render(f"Remote: http://{self.ip}:8080", True, C_GOLD)
+        url = self.font_small.render(f"Remote: http://{self.ip}:5000", True, C_GOLD)
         self.screen.blit(url, (self.W//2 - url.get_width()//2, int(self.H * 0.92)))
 
     def draw_game(self):
@@ -388,7 +388,7 @@ class PingPongDisplay:
             self.flash_alpha_p2 = max(0, self.flash_alpha_p2 - 12)
         
         # URL display at bottom
-        url_text = self.font_url.render(f"http://{self.ip}:8080", True, C_WHITE)
+        url_text = self.font_url.render(f"http://{self.ip}:5000", True, C_WHITE)
         # Dark background for URL
         url_bg = pygame.Rect(self.W//2 - url_text.get_width()//2 - 20, int(self.H * 0.9), url_text.get_width() + 40, url_text.get_height() + 10)
         pygame.draw.rect(self.screen, (0, 0, 0, 150), url_bg, border_radius=10)
@@ -438,9 +438,9 @@ class PingPongDisplay:
         running = True
         
         print(f"\n🏓 Ping Pong Scorer Running!")
-        print(f"📱 Remote Control: http://{self.ip}:8080")
-        print(f"   Score P1: http://{self.ip}:8080/score/player1")
-        print(f"   Score P2: http://{self.ip}:8080/score/player2")
+        print(f"📱 Remote Control: http://{self.ip}:5000")
+        print(f"   Score P1: http://{self.ip}:5000/score/player1")
+        print(f"   Score P2: http://{self.ip}:5000/score/player2")
         print()
         
         while running:
