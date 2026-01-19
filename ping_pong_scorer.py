@@ -150,9 +150,47 @@ class PingPongDisplay:
         threading.Thread(target=do_request, daemon=True).start()
 
     def trigger_replay(self):
-        """Trigger replay and save"""
-        self.send_to_replay_server("replay")
+        """Trigger replay - download and play the video"""
+        print("Replay button pressed - fetching replay...", flush=True)
         self.send_to_replay_server("save")
+        
+        def fetch_and_play_replay():
+            try:
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                    "Accept-Encoding": "gzip, deflate",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Connection": "keep-alive",
+                    "Cache-Control": "max-age=0",
+                    "Upgrade-Insecure-Requests": "1"
+                }
+                print("Sending request to /replay...", flush=True)
+                response = requests.get(f"{REPLAY_SERVER}/replay", headers=headers, timeout=60, stream=True)
+                print(f"Replay response status: {response.status_code}", flush=True)
+                print(f"Replay response headers: {dict(response.headers)}", flush=True)
+                
+                # Save to file
+                replay_file = "/home/pi/replay.mjpeg"
+                bytes_written = 0
+                with open(replay_file, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            bytes_written += len(chunk)
+                
+                print(f"Replay saved to {replay_file} ({bytes_written} bytes)", flush=True)
+                
+                if bytes_written > 0:
+                    self.playing_replay = True
+                    print("Replay download complete!", flush=True)
+                else:
+                    print("Replay file is empty!", flush=True)
+                    
+            except Exception as e:
+                print(f"Failed to fetch replay: {e}", flush=True)
+        
+        threading.Thread(target=fetch_and_play_replay, daemon=True).start()
 
     def setup_routes(self):
         @self.app.route('/score/player1', methods=['GET', 'POST'])
