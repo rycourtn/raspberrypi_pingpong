@@ -143,7 +143,7 @@ class PingPongDisplay:
                     "Cache-Control": "max-age=0",
                     "Upgrade-Insecure-Requests": "1"
                 }
-                requests.get(f"{REPLAY_SERVER}/{endpoint}", headers=headers, timeout=5)
+                requests.get(f"{REPLAY_SERVER}/{endpoint}", headers=headers, timeout=30)
                 print(f"Sent /{endpoint} to replay server", flush=True)
             except Exception as e:
                 print(f"Failed to send /{endpoint}: {e}", flush=True)
