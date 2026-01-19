@@ -135,9 +135,9 @@ class PingPongDisplay:
         def do_request():
             try:
                 requests.get(f"{REPLAY_SERVER}/{endpoint}", timeout=2)
-                print(f"Sent /{endpoint} to replay server")
+                print(f"Sent /{endpoint} to replay server", flush=True)
             except Exception as e:
-                print(f"Failed to send /{endpoint}: {e}")
+                print(f"Failed to send /{endpoint}: {e}", flush=True)
         threading.Thread(target=do_request, daemon=True).start()
 
     def trigger_replay(self):
