@@ -152,7 +152,6 @@ class PingPongDisplay:
     def trigger_replay(self):
         """Trigger replay - download and play the video"""
         print("Replay button pressed - fetching replay...", flush=True)
-        self.send_to_replay_server("save")
         
         def fetch_and_play_replay():
             try:
