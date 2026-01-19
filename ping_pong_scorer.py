@@ -7,6 +7,7 @@ Ping Pong Scorer - Raspberry Pi Version
 import pygame
 import threading
 import socket
+import requests
 
 # Colors - Purple and Pink theme
 C_P1_BG = (128, 0, 128)    # Purple
@@ -24,6 +25,9 @@ from flask import Flask, jsonify
 
 # Player name options
 PLAYER_NAMES = ["Ryan", "Ethan", "Ben", "Guest"]
+
+# External replay server
+REPLAY_SERVER = "http://192.168.1.175"
 
 def get_ip():
     try:
@@ -66,6 +70,7 @@ class PingPongDisplay:
         # Selection indices
         self.p1_name_idx = 0
         self.p2_name_idx = 1
+        self.first_server = 1  # 1 = Door serves first, 2 = Bong serves first
         
         # Flash animation
         self.flash_alpha_p1 = 0
@@ -125,15 +130,32 @@ class PingPongDisplay:
         except:
             pass
 
+    def send_to_replay_server(self, endpoint):
+        """Send HTTP request to replay server in background"""
+        def do_request():
+            try:
+                requests.get(f"{REPLAY_SERVER}/{endpoint}", timeout=2)
+                print(f"Sent /{endpoint} to replay server")
+            except Exception as e:
+                print(f"Failed to send /{endpoint}: {e}")
+        threading.Thread(target=do_request, daemon=True).start()
+
+    def trigger_replay(self):
+        """Trigger replay and save"""
+        self.send_to_replay_server("replay")
+        self.send_to_replay_server("save")
+
     def setup_routes(self):
         @self.app.route('/score/player1', methods=['GET', 'POST'])
         def s1():
             self.score(2)  # Button 1 scores for Player 2
+            self.send_to_replay_server("mark")
             return jsonify(status='ok', player=self.p2_name, score=self.p2_score)
         
         @self.app.route('/score/player2', methods=['GET', 'POST'])
         def s2():
             self.score(1)  # Button 2 scores for Player 1
+            self.send_to_replay_server("mark")
             return jsonify(status='ok', player=self.p1_name, score=self.p1_score)
             
         @self.app.route('/reset', methods=['GET', 'POST'])
@@ -235,7 +257,7 @@ class PingPongDisplay:
     def reset_game(self):
         self.p1_score = 0
         self.p2_score = 0
-        self.serving = 1
+        self.serving = self.first_server
         self.points_serve = 0
         self.game_over = False
         print("Game reset!")
@@ -274,7 +296,7 @@ class PingPongDisplay:
         
         # Player 1 Selection
         y = int(self.H * 0.15)
-        p1_label = self.font_name.render("Player 1:", True, C_P1_BG)
+        p1_label = self.font_name.render("Door:", True, C_P1_BG)
         self.screen.blit(p1_label, (left_margin, y + btn_h//3))
         
         for i, name in enumerate(PLAYER_NAMES):
@@ -285,7 +307,7 @@ class PingPongDisplay:
         
         # Player 2 Selection
         y = int(self.H * 0.27)
-        p2_label = self.font_name.render("Player 2:", True, C_P2_BG)
+        p2_label = self.font_name.render("Bong:", True, C_P2_BG)
         self.screen.blit(p2_label, (left_margin, y + btn_h//3))
         
         for i, name in enumerate(PLAYER_NAMES):
@@ -294,9 +316,39 @@ class PingPongDisplay:
             self.draw_button(rect, name, C_P2_BG, selected=(i == self.p2_name_idx))
             self.setup_buttons[f"p2_{i}"] = rect
         
+        # Serve First checkbox (next to Guest for Player 2)
+        guest_idx = PLAYER_NAMES.index("Guest")
+        checkbox_x = btn_start_x + guest_idx * (btn_w + spacing) + btn_w + spacing
+        checkbox_size = int(btn_h * 0.6)
+        checkbox_y = y + (btn_h - checkbox_size) // 2
+        checkbox_rect = pygame.Rect(checkbox_x, checkbox_y, checkbox_size, checkbox_size)
+        
+        # Draw checkbox border
+        pygame.draw.rect(self.screen, C_GOLD, checkbox_rect, 3, border_radius=4)
+        # Fill if Bong serves first
+        if self.first_server == 2:
+            inner_rect = checkbox_rect.inflate(-8, -8)
+            pygame.draw.rect(self.screen, C_GOLD, inner_rect, border_radius=2)
+        
+        # Label for checkbox
+        serve_label = self.font_small.render("Serves First", True, C_GOLD)
+        self.screen.blit(serve_label, (checkbox_x + checkbox_size + 8, checkbox_y + (checkbox_size - serve_label.get_height()) // 2))
+        self.setup_buttons["serve_first_p2"] = checkbox_rect
+        
+        # Also add checkbox for Player 1 (Door)
+        y_p1 = int(self.H * 0.15)
+        checkbox_rect_p1 = pygame.Rect(checkbox_x, y_p1 + (btn_h - checkbox_size) // 2, checkbox_size, checkbox_size)
+        pygame.draw.rect(self.screen, C_GOLD, checkbox_rect_p1, 3, border_radius=4)
+        if self.first_server == 1:
+            inner_rect = checkbox_rect_p1.inflate(-8, -8)
+            pygame.draw.rect(self.screen, C_GOLD, inner_rect, border_radius=2)
+        serve_label_p1 = self.font_small.render("Serves First", True, C_GOLD)
+        self.screen.blit(serve_label_p1, (checkbox_x + checkbox_size + 8, y_p1 + (btn_h - serve_label_p1.get_height()) // 2))
+        self.setup_buttons["serve_first_p1"] = checkbox_rect_p1
+        
         # Points to Win
         y = int(self.H * 0.42)
-        pts_label = self.font_name.render("Points to Win:", True, C_GOLD)
+        pts_label = self.font_name.render("Points:", True, C_GOLD)
         self.screen.blit(pts_label, (left_margin, y + btn_h//3))
         
         for i, pts in enumerate([7, 11, 21]):
@@ -307,7 +359,7 @@ class PingPongDisplay:
         
         # Serves per Turn
         y = int(self.H * 0.54)
-        srv_label = self.font_name.render("Serves/Turn:", True, C_GOLD)
+        srv_label = self.font_name.render("Serves:", True, C_GOLD)
         self.screen.blit(srv_label, (left_margin, y + btn_h//3))
         
         for i, srv in enumerate([1, 2, 5]):
@@ -325,14 +377,6 @@ class PingPongDisplay:
         self.screen.blit(start_text, (start_rect.centerx - start_text.get_width()//2, 
                                       start_rect.centery - start_text.get_height()//2))
         self.setup_buttons["start"] = start_rect
-        
-        # Preview
-        preview = self.font_small.render(f"{PLAYER_NAMES[self.p1_name_idx]} vs {PLAYER_NAMES[self.p2_name_idx]} • First to {self.points_to_win} • {self.serves_per_turn} serve(s)/turn", True, (150, 150, 150))
-        self.screen.blit(preview, (self.W//2 - preview.get_width()//2, int(self.H * 0.85)))
-        
-        # URL info
-        url = self.font_small.render(f"Remote: http://{self.ip}:5000", True, C_GOLD)
-        self.screen.blit(url, (self.W//2 - url.get_width()//2, int(self.H * 0.92)))
 
     def draw_game(self):
         # Left half (P1) - Purple
@@ -387,13 +431,6 @@ class PingPongDisplay:
             self.screen.blit(flash_surface, (self.W//2, 0))
             self.flash_alpha_p2 = max(0, self.flash_alpha_p2 - 12)
         
-        # URL display at bottom
-        url_text = self.font_url.render(f"http://{self.ip}:5000", True, C_WHITE)
-        # Dark background for URL
-        url_bg = pygame.Rect(self.W//2 - url_text.get_width()//2 - 20, int(self.H * 0.9), url_text.get_width() + 40, url_text.get_height() + 10)
-        pygame.draw.rect(self.screen, (0, 0, 0, 150), url_bg, border_radius=10)
-        self.screen.blit(url_text, (self.W//2 - url_text.get_width()//2, int(self.H * 0.9) + 5))
-        
         # Store buttons for click handling
         self.game_buttons = {}
         
@@ -405,6 +442,15 @@ class PingPongDisplay:
         new_txt = self.font_small.render("NEW GAME", True, C_WHITE)
         self.screen.blit(new_txt, (new_rect.centerx - new_txt.get_width()//2, new_rect.centery - new_txt.get_height()//2))
         self.game_buttons["new_game"] = new_rect
+        
+        # Replay button (bottom center)
+        replay_w = int(self.W * 0.15)
+        replay_h = int(self.H * 0.08)
+        replay_rect = pygame.Rect(self.W//2 - replay_w//2, int(self.H * 0.88), replay_w, replay_h)
+        pygame.draw.rect(self.screen, C_GREEN, replay_rect, border_radius=8)
+        replay_txt = self.font_button.render("REPLAY", True, C_WHITE)
+        self.screen.blit(replay_txt, (replay_rect.centerx - replay_txt.get_width()//2, replay_rect.centery - replay_txt.get_height()//2))
+        self.game_buttons["replay"] = replay_rect
 
     def handle_setup_click(self, pos):
         for key, rect in self.setup_buttons.items():
@@ -417,17 +463,23 @@ class PingPongDisplay:
                     self.points_to_win = int(key.split("_")[1])
                 elif key.startswith("srv_"):
                     self.serves_per_turn = int(key.split("_")[1])
+                elif key == "serve_first_p1":
+                    self.first_server = 1
+                elif key == "serve_first_p2":
+                    self.first_server = 2
                 elif key == "start":
                     self.start_game()
                 return
 
     def handle_game_click(self, pos):
-        # Only handle New Game button - no tap-to-score
+        # Only handle New Game and Replay buttons - no tap-to-score
         for key, rect in self.game_buttons.items():
             if rect.collidepoint(pos):
                 if key == "new_game":
                     self.game_started = False
                     self.game_over = False
+                elif key == "replay":
+                    self.trigger_replay()
                 return
 
     def run(self):
