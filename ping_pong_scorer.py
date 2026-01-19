@@ -76,6 +76,12 @@ class PingPongDisplay:
         self.flash_alpha_p1 = 0
         self.flash_alpha_p2 = 0
         
+        # Replay state
+        self.playing_replay = False
+        self.replay_frames = []
+        self.replay_frame_idx = 0
+        self.replay_last_frame_time = 0
+        
         # Fonts - scale based on screen size
         scale = self.H / 600
         self.font_score = pygame.font.Font(None, int(150 * scale))
@@ -169,6 +175,10 @@ class PingPongDisplay:
                 print(f"Replay response status: {response.status_code}", flush=True)
                 print(f"Replay response headers: {dict(response.headers)}", flush=True)
                 
+                if response.status_code != 200:
+                    print("Replay request failed", flush=True)
+                    return
+                
                 # Save to file
                 replay_file = "/home/pi/replay.mjpeg"
                 bytes_written = 0
@@ -180,16 +190,67 @@ class PingPongDisplay:
                 
                 print(f"Replay saved to {replay_file} ({bytes_written} bytes)", flush=True)
                 
-                if bytes_written > 0:
-                    self.playing_replay = True
-                    print("Replay download complete!", flush=True)
+                if bytes_written > 1000:
+                    # Parse mjpeg frames
+                    self.parse_and_play_mjpeg(replay_file)
                 else:
-                    print("Replay file is empty!", flush=True)
+                    print("Replay file too small!", flush=True)
                     
             except Exception as e:
                 print(f"Failed to fetch replay: {e}", flush=True)
         
         threading.Thread(target=fetch_and_play_replay, daemon=True).start()
+
+    def parse_and_play_mjpeg(self, filepath):
+        """Parse mjpeg file and load frames for playback"""
+        import io
+        print("Parsing mjpeg frames...", flush=True)
+        
+        try:
+            with open(filepath, 'rb') as f:
+                data = f.read()
+            
+            # Find all JPEG frames (they start with FFD8 and end with FFD9)
+            frames = []
+            start = 0
+            while True:
+                # Find JPEG start marker
+                jpg_start = data.find(b'\xff\xd8', start)
+                if jpg_start == -1:
+                    break
+                # Find JPEG end marker
+                jpg_end = data.find(b'\xff\xd9', jpg_start)
+                if jpg_end == -1:
+                    break
+                
+                # Extract the JPEG data
+                jpg_data = data[jpg_start:jpg_end + 2]
+                
+                # Convert to pygame surface
+                try:
+                    img_io = io.BytesIO(jpg_data)
+                    surface = pygame.image.load(img_io)
+                    # Scale to screen size
+                    surface = pygame.transform.scale(surface, (self.W, self.H))
+                    frames.append(surface)
+                except Exception as e:
+                    print(f"Failed to load frame: {e}", flush=True)
+                
+                start = jpg_end + 2
+            
+            print(f"Loaded {len(frames)} frames", flush=True)
+            
+            if frames:
+                self.replay_frames = frames
+                self.replay_frame_idx = 0
+                self.replay_last_frame_time = pygame.time.get_ticks()
+                self.playing_replay = True
+                print("Starting replay playback!", flush=True)
+            else:
+                print("No frames found in mjpeg!", flush=True)
+                
+        except Exception as e:
+            print(f"Failed to parse mjpeg: {e}", flush=True)
 
     def setup_routes(self):
         @self.app.route('/score/player1', methods=['GET', 'POST'])
@@ -425,6 +486,31 @@ class PingPongDisplay:
         self.setup_buttons["start"] = start_rect
 
     def draw_game(self):
+        # Check if playing replay
+        if self.playing_replay and self.replay_frames:
+            current_time = pygame.time.get_ticks()
+            # Play at ~30fps (33ms per frame)
+            if current_time - self.replay_last_frame_time > 33:
+                self.replay_frame_idx += 1
+                self.replay_last_frame_time = current_time
+                
+                if self.replay_frame_idx >= len(self.replay_frames):
+                    # Replay finished
+                    self.playing_replay = False
+                    self.replay_frames = []
+                    self.replay_frame_idx = 0
+                    print("Replay finished!", flush=True)
+                    return
+            
+            # Draw current frame
+            if self.replay_frame_idx < len(self.replay_frames):
+                self.screen.blit(self.replay_frames[self.replay_frame_idx], (0, 0))
+                
+                # Draw "REPLAY" text overlay
+                replay_text = self.font_title.render("▶ REPLAY", True, C_GOLD)
+                self.screen.blit(replay_text, (20, 20))
+            return
+        
         # Left half (P1) - Purple
         pygame.draw.rect(self.screen, C_P1_BG, (0, 0, self.W//2, self.H))
         # Right half (P2) - Pink
