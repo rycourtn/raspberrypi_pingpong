@@ -134,7 +134,10 @@ class PingPongDisplay:
         """Send HTTP request to replay server in background"""
         def do_request():
             try:
-                requests.get(f"{REPLAY_SERVER}/{endpoint}", timeout=2)
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+                }
+                requests.get(f"{REPLAY_SERVER}/{endpoint}", headers=headers, timeout=2)
                 print(f"Sent /{endpoint} to replay server", flush=True)
             except Exception as e:
                 print(f"Failed to send /{endpoint}: {e}", flush=True)
