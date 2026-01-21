@@ -86,7 +86,7 @@ class PingPongDisplay:
         # Stream capture buffer (stores frames in RAM)
         self.stream_buffer = []
         self.stream_buffer_lock = threading.Lock()
-        self.max_buffer_frames = 900  # ~30 seconds at 30fps
+        self.max_buffer_seconds = 180  # 3 minutes max
         self.stream_capturing = False
         
         # Fonts - scale based on screen size
@@ -165,10 +165,12 @@ class PingPongDisplay:
     def start_stream_capture(self):
         """Start capturing the live stream into RAM buffer"""
         import io
+        import time
         
         def capture_loop():
             print("Starting stream capture...", flush=True)
             self.stream_capturing = True
+            capture_start_time = None
             
             headers = {
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
@@ -185,6 +187,20 @@ class PingPongDisplay:
                     for chunk in response.iter_content(chunk_size=4096):
                         if not self.stream_capturing:
                             break
+                        
+                        # Only capture if game is active and not over
+                        if not self.game_started or self.game_over:
+                            continue
+                        
+                        # Start timing when we begin capturing
+                        if capture_start_time is None:
+                            capture_start_time = time.time()
+                        
+                        # Stop after 3 minutes
+                        if time.time() - capture_start_time > self.max_buffer_seconds:
+                            print("Reached 3 minute capture limit", flush=True)
+                            continue
+                        
                         if chunk:
                             buffer += chunk
                             
@@ -213,15 +229,11 @@ class PingPongDisplay:
                                     
                                     with self.stream_buffer_lock:
                                         self.stream_buffer.append(surface)
-                                        # Keep buffer at max size
-                                        while len(self.stream_buffer) > self.max_buffer_frames:
-                                            self.stream_buffer.pop(0)
                                 except:
                                     pass
                                     
                 except Exception as e:
                     print(f"Stream capture error: {e}", flush=True)
-                    import time
                     time.sleep(1)  # Wait before reconnecting
             
             print("Stream capture stopped", flush=True)
@@ -367,7 +379,12 @@ class PingPongDisplay:
         self.serving = self.first_server
         self.points_serve = 0
         self.game_over = False
-        print("Game reset!")
+        
+        # Clear the stream buffer for new game
+        with self.stream_buffer_lock:
+            self.stream_buffer = []
+        
+        print("Game reset!", flush=True)
 
     def start_game(self):
         self.p1_name = PLAYER_NAMES[self.p1_name_idx]
