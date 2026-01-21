@@ -81,6 +81,13 @@ class PingPongDisplay:
         self.replay_frames = []
         self.replay_frame_idx = 0
         self.replay_last_frame_time = 0
+        self.replay_close_btn = None
+        
+        # Stream capture buffer (stores frames in RAM)
+        self.stream_buffer = []
+        self.stream_buffer_lock = threading.Lock()
+        self.max_buffer_frames = 900  # ~30 seconds at 30fps
+        self.stream_capturing = False
         
         # Fonts - scale based on screen size
         scale = self.H / 600
@@ -155,102 +162,95 @@ class PingPongDisplay:
                 print(f"Failed to send /{endpoint}: {e}", flush=True)
         threading.Thread(target=do_request, daemon=True).start()
 
-    def trigger_replay(self):
-        """Trigger replay - download and play the video"""
-        print("Replay button pressed - fetching replay...", flush=True)
-        
-        def fetch_and_play_replay():
-            try:
-                headers = {
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                    "Accept-Encoding": "gzip, deflate",
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Connection": "keep-alive",
-                    "Cache-Control": "max-age=0",
-                    "Upgrade-Insecure-Requests": "1"
-                }
-                print("Sending request to /replay...", flush=True)
-                response = requests.get(f"{REPLAY_SERVER}/replay", headers=headers, timeout=60, stream=True)
-                print(f"Replay response status: {response.status_code}", flush=True)
-                print(f"Replay response headers: {dict(response.headers)}", flush=True)
-                
-                if response.status_code != 200:
-                    print("Replay request failed", flush=True)
-                    return
-                
-                # Save to file
-                replay_file = "/home/pi/replay.mjpeg"
-                bytes_written = 0
-                with open(replay_file, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-                            bytes_written += len(chunk)
-                
-                print(f"Replay saved to {replay_file} ({bytes_written} bytes)", flush=True)
-                
-                if bytes_written > 1000:
-                    # Parse mjpeg frames
-                    self.parse_and_play_mjpeg(replay_file)
-                else:
-                    print("Replay file too small!", flush=True)
-                    
-            except Exception as e:
-                print(f"Failed to fetch replay: {e}", flush=True)
-        
-        threading.Thread(target=fetch_and_play_replay, daemon=True).start()
-
-    def parse_and_play_mjpeg(self, filepath):
-        """Parse mjpeg file and load frames for playback"""
+    def start_stream_capture(self):
+        """Start capturing the live stream into RAM buffer"""
         import io
-        print("Parsing mjpeg frames...", flush=True)
         
-        try:
-            with open(filepath, 'rb') as f:
-                data = f.read()
+        def capture_loop():
+            print("Starting stream capture...", flush=True)
+            self.stream_capturing = True
             
-            # Find all JPEG frames (they start with FFD8 and end with FFD9)
-            frames = []
-            start = 0
-            while True:
-                # Find JPEG start marker
-                jpg_start = data.find(b'\xff\xd8', start)
-                if jpg_start == -1:
-                    break
-                # Find JPEG end marker
-                jpg_end = data.find(b'\xff\xd9', jpg_start)
-                if jpg_end == -1:
-                    break
-                
-                # Extract the JPEG data
-                jpg_data = data[jpg_start:jpg_end + 2]
-                
-                # Convert to pygame surface
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+                "Accept": "*/*",
+                "Connection": "keep-alive",
+            }
+            
+            while self.stream_capturing:
                 try:
-                    img_io = io.BytesIO(jpg_data)
-                    surface = pygame.image.load(img_io)
-                    # Scale to screen size
-                    surface = pygame.transform.scale(surface, (self.W, self.H))
-                    frames.append(surface)
+                    response = requests.get(f"{REPLAY_SERVER}/stream", headers=headers, stream=True, timeout=10)
+                    print(f"Connected to stream, status: {response.status_code}", flush=True)
+                    
+                    buffer = b''
+                    for chunk in response.iter_content(chunk_size=4096):
+                        if not self.stream_capturing:
+                            break
+                        if chunk:
+                            buffer += chunk
+                            
+                            # Look for complete JPEG frames
+                            while True:
+                                start = buffer.find(b'\xff\xd8')
+                                if start == -1:
+                                    buffer = b''
+                                    break
+                                    
+                                end = buffer.find(b'\xff\xd9', start)
+                                if end == -1:
+                                    # Keep data from start marker
+                                    buffer = buffer[start:]
+                                    break
+                                
+                                # Extract complete frame
+                                jpg_data = buffer[start:end + 2]
+                                buffer = buffer[end + 2:]
+                                
+                                # Convert to pygame surface
+                                try:
+                                    img_io = io.BytesIO(jpg_data)
+                                    surface = pygame.image.load(img_io)
+                                    surface = pygame.transform.scale(surface, (self.W, self.H))
+                                    
+                                    with self.stream_buffer_lock:
+                                        self.stream_buffer.append(surface)
+                                        # Keep buffer at max size
+                                        while len(self.stream_buffer) > self.max_buffer_frames:
+                                            self.stream_buffer.pop(0)
+                                except:
+                                    pass
+                                    
                 except Exception as e:
-                    print(f"Failed to load frame: {e}", flush=True)
-                
-                start = jpg_end + 2
+                    print(f"Stream capture error: {e}", flush=True)
+                    import time
+                    time.sleep(1)  # Wait before reconnecting
             
-            print(f"Loaded {len(frames)} frames", flush=True)
+            print("Stream capture stopped", flush=True)
+        
+        threading.Thread(target=capture_loop, daemon=True).start()
+
+    def trigger_replay(self):
+        """Play the buffered video"""
+        print("Replay button pressed", flush=True)
+        
+        with self.stream_buffer_lock:
+            if not self.stream_buffer:
+                print("No frames in buffer!", flush=True)
+                return
             
-            if frames:
-                self.replay_frames = frames
-                self.replay_frame_idx = 0
-                self.replay_last_frame_time = pygame.time.get_ticks()
-                self.playing_replay = True
-                print("Starting replay playback!", flush=True)
-            else:
-                print("No frames found in mjpeg!", flush=True)
-                
-        except Exception as e:
-            print(f"Failed to parse mjpeg: {e}", flush=True)
+            # Copy frames for playback
+            self.replay_frames = self.stream_buffer.copy()
+            print(f"Playing {len(self.replay_frames)} frames", flush=True)
+        
+        self.replay_frame_idx = 0
+        self.replay_last_frame_time = pygame.time.get_ticks()
+        self.playing_replay = True
+
+    def stop_replay(self):
+        """Stop replay and return to game"""
+        self.playing_replay = False
+        self.replay_frames = []
+        self.replay_frame_idx = 0
+        print("Replay stopped", flush=True)
 
     def setup_routes(self):
         @self.app.route('/score/player1', methods=['GET', 'POST'])
@@ -374,6 +374,10 @@ class PingPongDisplay:
         self.p2_name = PLAYER_NAMES[self.p2_name_idx]
         self.game_started = True
         self.reset_game()
+        
+        # Start capturing the stream
+        if not self.stream_capturing:
+            self.start_stream_capture()
 
     def draw_button(self, rect, text, color, text_color=C_WHITE, selected=False):
         if selected:
@@ -495,12 +499,8 @@ class PingPongDisplay:
                 self.replay_last_frame_time = current_time
                 
                 if self.replay_frame_idx >= len(self.replay_frames):
-                    # Replay finished
-                    self.playing_replay = False
-                    self.replay_frames = []
+                    # Replay finished - loop back to start
                     self.replay_frame_idx = 0
-                    print("Replay finished!", flush=True)
-                    return
             
             # Draw current frame
             if self.replay_frame_idx < len(self.replay_frames):
@@ -509,7 +509,18 @@ class PingPongDisplay:
                 # Draw "REPLAY" text overlay
                 replay_text = self.font_title.render("▶ REPLAY", True, C_GOLD)
                 self.screen.blit(replay_text, (20, 20))
+                
+                # Draw close button (top right)
+                btn_w = int(self.W * 0.1)
+                btn_h = int(self.H * 0.06)
+                close_rect = pygame.Rect(self.W - btn_w - 20, 20, btn_w, btn_h)
+                pygame.draw.rect(self.screen, (200, 50, 50), close_rect, border_radius=5)
+                close_txt = self.font_small.render("CLOSE", True, C_WHITE)
+                self.screen.blit(close_txt, (close_rect.centerx - close_txt.get_width()//2, close_rect.centery - close_txt.get_height()//2))
+                self.replay_close_btn = close_rect
             return
+        
+        self.replay_close_btn = None
         
         # Left half (P1) - Purple
         pygame.draw.rect(self.screen, C_P1_BG, (0, 0, self.W//2, self.H))
@@ -604,6 +615,11 @@ class PingPongDisplay:
                 return
 
     def handle_game_click(self, pos):
+        # Check for replay close button first
+        if self.playing_replay and self.replay_close_btn and self.replay_close_btn.collidepoint(pos):
+            self.stop_replay()
+            return
+        
         # Only handle New Game and Replay buttons - no tap-to-score
         for key, rect in self.game_buttons.items():
             if rect.collidepoint(pos):
