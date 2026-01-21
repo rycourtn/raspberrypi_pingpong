@@ -88,6 +88,7 @@ class PingPongDisplay:
         self.stream_buffer_lock = threading.Lock()
         self.max_buffer_seconds = 180  # 3 minutes max
         self.stream_capturing = False
+        self.saved_replay_frames = []  # Saved replay from last rally
         
         # Fonts - scale based on screen size
         scale = self.H / 600
@@ -247,21 +248,29 @@ class PingPongDisplay:
         threading.Thread(target=capture_loop, daemon=True).start()
 
     def trigger_replay(self):
-        """Play the buffered video"""
+        """Play the saved replay buffer"""
         print("Replay button pressed", flush=True)
         
-        with self.stream_buffer_lock:
-            if not self.stream_buffer:
-                print("No frames in buffer!", flush=True)
-                return
-            
-            # Copy frames for playback
-            self.replay_frames = self.stream_buffer.copy()
-            print(f"Playing {len(self.replay_frames)} frames, first frame size: {self.replay_frames[0].get_size()}", flush=True)
+        if not self.saved_replay_frames:
+            print("No saved replay available!", flush=True)
+            return
+        
+        self.replay_frames = self.saved_replay_frames.copy()
+        print(f"Playing {len(self.replay_frames)} frames", flush=True)
         
         self.replay_frame_idx = 0
         self.replay_last_frame_time = pygame.time.get_ticks()
         self.playing_replay = True
+
+    def save_replay_buffer(self):
+        """Save current buffer as replay and clear for next rally"""
+        with self.stream_buffer_lock:
+            if self.stream_buffer:
+                self.saved_replay_frames = self.stream_buffer.copy()
+                print(f"Saved {len(self.saved_replay_frames)} frames for replay", flush=True)
+                self.stream_buffer = []
+            else:
+                print("No frames to save", flush=True)
 
     def stop_replay(self):
         """Stop replay and return to game"""
@@ -273,14 +282,16 @@ class PingPongDisplay:
     def setup_routes(self):
         @self.app.route('/score/player1', methods=['GET', 'POST'])
         def s1():
+            # Save current buffer for replay, then clear it
+            self.save_replay_buffer()
             self.score(2)  # Button 1 scores for Player 2
-            self.send_to_replay_server("mark")
             return jsonify(status='ok', player=self.p2_name, score=self.p2_score)
         
         @self.app.route('/score/player2', methods=['GET', 'POST'])
         def s2():
+            # Save current buffer for replay, then clear it
+            self.save_replay_buffer()
             self.score(1)  # Button 2 scores for Player 1
-            self.send_to_replay_server("mark")
             return jsonify(status='ok', player=self.p1_name, score=self.p1_score)
             
         @self.app.route('/reset', methods=['GET', 'POST'])
