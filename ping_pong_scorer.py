@@ -233,8 +233,10 @@ class PingPongDisplay:
                                     
                                     with self.stream_buffer_lock:
                                         self.stream_buffer.append(surface)
-                                except:
-                                    pass
+                                        if len(self.stream_buffer) % 100 == 0:
+                                            print(f"Buffer: {len(self.stream_buffer)} frames, last frame size: {surface.get_size()}", flush=True)
+                                except Exception as e:
+                                    print(f"Frame load error: {e}", flush=True)
                                     
                 except Exception as e:
                     print(f"Stream capture error: {e}", flush=True)
@@ -255,7 +257,7 @@ class PingPongDisplay:
             
             # Copy frames for playback
             self.replay_frames = self.stream_buffer.copy()
-            print(f"Playing {len(self.replay_frames)} frames", flush=True)
+            print(f"Playing {len(self.replay_frames)} frames, first frame size: {self.replay_frames[0].get_size()}", flush=True)
         
         self.replay_frame_idx = 0
         self.replay_last_frame_time = pygame.time.get_ticks()
