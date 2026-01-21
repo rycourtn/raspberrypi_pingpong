@@ -174,13 +174,17 @@ class PingPongDisplay:
             
             headers = {
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-                "Accept": "*/*",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                "Accept-Encoding": "gzip, deflate",
+                "Accept-Language": "en-US,en;q=0.9",
                 "Connection": "keep-alive",
+                "Cache-Control": "max-age=0",
+                "Upgrade-Insecure-Requests": "1"
             }
             
             while self.stream_capturing:
                 try:
-                    response = requests.get(f"{REPLAY_SERVER}/stream", headers=headers, stream=True, timeout=10)
+                    response = requests.get(f"{REPLAY_SERVER}/stream", headers=headers, stream=True, timeout=30)
                     print(f"Connected to stream, status: {response.status_code}", flush=True)
                     
                     buffer = b''
@@ -234,7 +238,7 @@ class PingPongDisplay:
                                     
                 except Exception as e:
                     print(f"Stream capture error: {e}", flush=True)
-                    time.sleep(1)  # Wait before reconnecting
+                    time.sleep(2)  # Wait before reconnecting
             
             print("Stream capture stopped", flush=True)
         
