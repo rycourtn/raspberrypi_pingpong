@@ -86,9 +86,10 @@ class PingPongDisplay:
         # Stream capture buffer (stores frames in RAM)
         self.stream_buffer = []
         self.stream_buffer_lock = threading.Lock()
-        self.max_buffer_seconds = 180  # 3 minutes max
+        self.max_buffer_seconds = 180  # 3 minutes max per rally
         self.stream_capturing = False
         self.saved_replay_frames = []  # Saved replay from last rally
+        self.capture_start_time = None  # Reset on each new rally
         
         # Fonts - scale based on screen size
         scale = self.H / 600
@@ -171,7 +172,6 @@ class PingPongDisplay:
         def capture_loop():
             print("Starting stream capture...", flush=True)
             self.stream_capturing = True
-            capture_start_time = None
             
             headers = {
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
@@ -197,13 +197,12 @@ class PingPongDisplay:
                         if not self.game_started or self.game_over:
                             continue
                         
-                        # Start timing when we begin capturing
-                        if capture_start_time is None:
-                            capture_start_time = time.time()
+                        # Start timing when we begin capturing a new rally
+                        if self.capture_start_time is None:
+                            self.capture_start_time = time.time()
                         
-                        # Stop after 3 minutes
-                        if time.time() - capture_start_time > self.max_buffer_seconds:
-                            print("Reached 3 minute capture limit", flush=True)
+                        # Stop after 3 minutes for this rally
+                        if time.time() - self.capture_start_time > self.max_buffer_seconds:
                             continue
                         
                         if chunk:
@@ -271,6 +270,8 @@ class PingPongDisplay:
                 self.stream_buffer = []
             else:
                 print("No frames to save", flush=True)
+        # Reset timer for next rally
+        self.capture_start_time = None
 
     def stop_replay(self):
         """Stop replay and return to game"""
