@@ -528,8 +528,8 @@ class PingPongDisplay:
         # Check if playing replay
         if self.playing_replay and self.replay_frames:
             current_time = pygame.time.get_ticks()
-            # Play at ~30fps (33ms per frame)
-            if current_time - self.replay_last_frame_time > 33:
+            # Play at ~15fps (67ms per frame)
+            if current_time - self.replay_last_frame_time > 67:
                 self.replay_frame_idx += 1
                 self.replay_last_frame_time = current_time
                 
