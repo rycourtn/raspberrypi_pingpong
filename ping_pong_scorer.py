@@ -1,0 +1,476 @@
+#!/usr/bin/env python3
+"""
+Ping Pong Scorer - Raspberry Pi Version
+- Setup screen: clickable buttons
+- Game screen: HTTP only for scoring (no touch scoring)
+"""
+import pygame
+import threading
+import socket
+
+# Colors - Purple and Pink theme
+C_P1_BG = (128, 0, 128)    # Purple
+C_P2_BG = (255, 20, 147)   # Deep Pink
+C_DARK = (30, 20, 40)      # Dark purple background
+C_WHITE = (255, 255, 255)
+C_GOLD = (255, 215, 0)
+C_FLASH_P1 = (200, 150, 255)
+C_FLASH_P2 = (255, 150, 200)
+C_GREEN = (39, 174, 96)
+C_ORANGE = (243, 156, 18)
+C_GRAY = (80, 80, 80)
+
+from flask import Flask, jsonify
+
+# Player name options
+PLAYER_NAMES = ["Ryan", "Ethan", "Ben", "Guest"]
+
+def get_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except:
+        return "localhost"
+
+class PingPongDisplay:
+    def __init__(self):
+        pygame.init()
+        pygame.mixer.init()
+        pygame.mouse.set_visible(True)
+        
+        # Load or create sounds
+        self.setup_sounds()
+        
+        # Fullscreen on Pi
+        self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        self.W, self.H = self.screen.get_size()
+        pygame.display.set_caption("Ping Pong Scorer")
+        
+        # Game State
+        self.p1_name = PLAYER_NAMES[0]
+        self.p2_name = PLAYER_NAMES[1]
+        self.p1_score = 0
+        self.p2_score = 0
+        self.serving = 1
+        self.points_serve = 0
+        self.game_started = False
+        self.game_over = False
+        
+        # Game Settings
+        self.points_to_win = 11
+        self.serves_per_turn = 2
+        
+        # Selection indices
+        self.p1_name_idx = 0
+        self.p2_name_idx = 1
+        
+        # Flash animation
+        self.flash_alpha_p1 = 0
+        self.flash_alpha_p2 = 0
+        
+        # Fonts - scale based on screen size
+        scale = self.H / 600
+        self.font_score = pygame.font.Font(None, int(150 * scale))
+        self.font_name = pygame.font.Font(None, int(40 * scale))
+        self.font_serve = pygame.font.Font(None, int(30 * scale))
+        self.font_title = pygame.font.Font(None, int(50 * scale))
+        self.font_button = pygame.font.Font(None, int(35 * scale))
+        self.font_small = pygame.font.Font(None, int(28 * scale))
+        self.font_url = pygame.font.Font(None, int(45 * scale))
+        
+        # Get IP for display
+        self.ip = get_ip()
+        
+        # Flask app
+        self.app = Flask(__name__)
+        self.setup_routes()
+
+    def setup_sounds(self):
+        """Create simple beep sounds"""
+        try:
+            sample_rate = 22050
+            # Score sound - short beep
+            duration = 0.15
+            frames = int(duration * sample_rate)
+            freq = 880
+            arr = bytes([int(128 + 100 * ((i * freq // sample_rate) % 2 * 2 - 1)) for i in range(frames)])
+            self.sound_score = pygame.mixer.Sound(buffer=arr)
+            self.sound_score.set_volume(0.5)
+            
+            # Win sound - longer tone
+            duration = 0.4
+            frames = int(duration * sample_rate)
+            freq = 1200
+            arr = bytes([int(128 + 100 * ((i * freq // sample_rate) % 2 * 2 - 1)) for i in range(frames)])
+            self.sound_win = pygame.mixer.Sound(buffer=arr)
+            self.sound_win.set_volume(0.6)
+            
+            self.sound_enabled = True
+            print("Sound initialized")
+        except Exception as e:
+            print(f"Sound init failed: {e}")
+            self.sound_enabled = False
+
+    def play_sound(self, sound_type):
+        if not self.sound_enabled:
+            return
+        try:
+            if sound_type == 'score':
+                self.sound_score.play()
+            elif sound_type == 'win':
+                self.sound_win.play()
+        except:
+            pass
+
+    def setup_routes(self):
+        @self.app.route('/score/player1', methods=['GET', 'POST'])
+        def s1():
+            self.score(2)  # Button 1 scores for Player 2
+            return jsonify(status='ok', player=self.p2_name, score=self.p2_score)
+        
+        @self.app.route('/score/player2', methods=['GET', 'POST'])
+        def s2():
+            self.score(1)  # Button 2 scores for Player 1
+            return jsonify(status='ok', player=self.p1_name, score=self.p1_score)
+            
+        @self.app.route('/reset', methods=['GET', 'POST'])
+        def r():
+            self.reset_game()
+            return jsonify(status='ok')
+        
+        @self.app.route('/status', methods=['GET'])
+        def status():
+            return jsonify(
+                p1_name=self.p1_name,
+                p1_score=self.p1_score,
+                p2_name=self.p2_name, 
+                p2_score=self.p2_score,
+                serving=self.serving,
+                game_started=self.game_started,
+                game_over=self.game_over
+            )
+
+        @self.app.route('/')
+        def remote():
+            return f'''
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    body {{ display:flex; flex-direction:column; margin:0; height:100vh; background:#1e1428; font-family:Arial; }}
+                    h1 {{ color:white; text-align:center; padding:20px; margin:0; }}
+                    .buttons {{ display:flex; flex:1; gap:10px; padding:10px; }}
+                    .btn {{ flex:1; border:none; border-radius:15px; font-size:28px; font-weight:bold; color:white; cursor:pointer; }}
+                    .btn:active {{ opacity:0.7; transform:scale(0.98); }}
+                    .p1 {{ background:#800080; }}
+                    .p2 {{ background:#ff1493; }}
+                    .reset {{ background:#f39c12; margin:10px; padding:20px; border-radius:10px; }}
+                    .status {{ color:#bdc3c7; text-align:center; padding:15px; font-size:18px; }}
+                </style>
+            </head>
+            <body>
+                <h1>🏓 Ping Pong Remote</h1>
+                <div class="buttons">
+                    <button class="btn p1" onclick="score(1)">{self.p1_name}</button>
+                    <button class="btn p2" onclick="score(2)">{self.p2_name}</button>
+                </div>
+                <button class="btn reset" onclick="reset()">Reset Game</button>
+                <div class="status" id="status">Tap player to score</div>
+                <script>
+                    function score(p) {{ 
+                        fetch('/score/player'+p, {{method:'POST'}})
+                            .then(r=>r.json())
+                            .then(d=>document.getElementById('status').textContent=d.player+': '+d.score); 
+                    }}
+                    function reset() {{ 
+                        fetch('/reset', {{method:'POST'}})
+                            .then(()=>document.getElementById('status').textContent='Game reset!'); 
+                    }}
+                </script>
+            </body>
+            </html>
+            '''
+
+    def start_flask(self):
+        t = threading.Thread(
+            target=lambda: self.app.run(host='0.0.0.0', port=5000, use_reloader=False, threaded=True), 
+            daemon=True
+        )
+        t.start()
+
+    def score(self, player):
+        if self.game_over or not self.game_started:
+            return
+        
+        if player == 1:
+            self.p1_score += 1
+            self.flash_alpha_p1 = 255
+        else:
+            self.p2_score += 1
+            self.flash_alpha_p2 = 255
+        
+        self.play_sound('score')
+            
+        print(f"{self.p1_name if player == 1 else self.p2_name} scored! {self.p1_score}-{self.p2_score}")
+        
+        # Serve Logic
+        self.points_serve += 1
+        deuce = (self.p1_score >= self.points_to_win - 1 and self.p2_score >= self.points_to_win - 1)
+        threshold = 1 if deuce else self.serves_per_turn
+        if self.points_serve >= threshold:
+            self.serving = 2 if self.serving == 1 else 1
+            self.points_serve = 0
+            
+        # Win Logic
+        if (self.p1_score >= self.points_to_win or self.p2_score >= self.points_to_win) and abs(self.p1_score - self.p2_score) >= 2:
+            self.game_over = True
+            self.play_sound('win')
+            winner = self.p1_name if self.p1_score > self.p2_score else self.p2_name
+            print(f"Game Over! {winner} wins!")
+
+    def reset_game(self):
+        self.p1_score = 0
+        self.p2_score = 0
+        self.serving = 1
+        self.points_serve = 0
+        self.game_over = False
+        print("Game reset!")
+
+    def start_game(self):
+        self.p1_name = PLAYER_NAMES[self.p1_name_idx]
+        self.p2_name = PLAYER_NAMES[self.p2_name_idx]
+        self.game_started = True
+        self.reset_game()
+
+    def draw_button(self, rect, text, color, text_color=C_WHITE, selected=False):
+        if selected:
+            pygame.draw.rect(self.screen, color, rect, border_radius=8)
+        else:
+            pygame.draw.rect(self.screen, C_GRAY, rect, border_radius=8)
+            pygame.draw.rect(self.screen, color, rect, 3, border_radius=8)
+        
+        txt = self.font_button.render(text, True, text_color if selected else color)
+        self.screen.blit(txt, (rect.centerx - txt.get_width()//2, rect.centery - txt.get_height()//2))
+        return rect
+
+    def draw_setup(self):
+        self.screen.fill(C_DARK)
+        
+        # Title
+        title = self.font_title.render("PING PONG SCORER", True, C_WHITE)
+        self.screen.blit(title, (self.W//2 - title.get_width()//2, 20))
+        
+        self.setup_buttons = {}
+        
+        btn_w = int(self.W * 0.12)
+        btn_h = int(self.H * 0.08)
+        spacing = int(self.W * 0.015)
+        left_margin = int(self.W * 0.08)
+        btn_start_x = int(self.W * 0.25)
+        
+        # Player 1 Selection
+        y = int(self.H * 0.15)
+        p1_label = self.font_name.render("Player 1:", True, C_P1_BG)
+        self.screen.blit(p1_label, (left_margin, y + btn_h//3))
+        
+        for i, name in enumerate(PLAYER_NAMES):
+            x = btn_start_x + i * (btn_w + spacing)
+            rect = pygame.Rect(x, y, btn_w, btn_h)
+            self.draw_button(rect, name, C_P1_BG, selected=(i == self.p1_name_idx))
+            self.setup_buttons[f"p1_{i}"] = rect
+        
+        # Player 2 Selection
+        y = int(self.H * 0.27)
+        p2_label = self.font_name.render("Player 2:", True, C_P2_BG)
+        self.screen.blit(p2_label, (left_margin, y + btn_h//3))
+        
+        for i, name in enumerate(PLAYER_NAMES):
+            x = btn_start_x + i * (btn_w + spacing)
+            rect = pygame.Rect(x, y, btn_w, btn_h)
+            self.draw_button(rect, name, C_P2_BG, selected=(i == self.p2_name_idx))
+            self.setup_buttons[f"p2_{i}"] = rect
+        
+        # Points to Win
+        y = int(self.H * 0.42)
+        pts_label = self.font_name.render("Points to Win:", True, C_GOLD)
+        self.screen.blit(pts_label, (left_margin, y + btn_h//3))
+        
+        for i, pts in enumerate([7, 11, 21]):
+            x = btn_start_x + i * (btn_w + spacing)
+            rect = pygame.Rect(x, y, btn_w, btn_h)
+            self.draw_button(rect, str(pts), C_GOLD, C_DARK, selected=(self.points_to_win == pts))
+            self.setup_buttons[f"pts_{pts}"] = rect
+        
+        # Serves per Turn
+        y = int(self.H * 0.54)
+        srv_label = self.font_name.render("Serves/Turn:", True, C_GOLD)
+        self.screen.blit(srv_label, (left_margin, y + btn_h//3))
+        
+        for i, srv in enumerate([1, 2, 5]):
+            x = btn_start_x + i * (btn_w + spacing)
+            rect = pygame.Rect(x, y, btn_w, btn_h)
+            self.draw_button(rect, str(srv), C_GOLD, C_DARK, selected=(self.serves_per_turn == srv))
+            self.setup_buttons[f"srv_{srv}"] = rect
+        
+        # Start Button
+        start_w = int(self.W * 0.35)
+        start_h = int(self.H * 0.12)
+        start_rect = pygame.Rect(self.W//2 - start_w//2, int(self.H * 0.68), start_w, start_h)
+        pygame.draw.rect(self.screen, C_GREEN, start_rect, border_radius=15)
+        start_text = self.font_title.render("START GAME", True, C_WHITE)
+        self.screen.blit(start_text, (start_rect.centerx - start_text.get_width()//2, 
+                                      start_rect.centery - start_text.get_height()//2))
+        self.setup_buttons["start"] = start_rect
+        
+        # Preview
+        preview = self.font_small.render(f"{PLAYER_NAMES[self.p1_name_idx]} vs {PLAYER_NAMES[self.p2_name_idx]} • First to {self.points_to_win} • {self.serves_per_turn} serve(s)/turn", True, (150, 150, 150))
+        self.screen.blit(preview, (self.W//2 - preview.get_width()//2, int(self.H * 0.85)))
+        
+        # URL info
+        url = self.font_small.render(f"Remote: http://{self.ip}:5000", True, C_GOLD)
+        self.screen.blit(url, (self.W//2 - url.get_width()//2, int(self.H * 0.92)))
+
+    def draw_game(self):
+        # Left half (P1) - Purple
+        pygame.draw.rect(self.screen, C_P1_BG, (0, 0, self.W//2, self.H))
+        # Right half (P2) - Pink
+        pygame.draw.rect(self.screen, C_P2_BG, (self.W//2, 0, self.W//2, self.H))
+        
+        center_p1 = self.W // 4
+        center_p2 = (self.W // 4) * 3
+        
+        # Names
+        n1 = self.font_name.render(self.p1_name.upper(), True, C_WHITE)
+        self.screen.blit(n1, (center_p1 - n1.get_width()//2, int(self.H * 0.08)))
+        
+        n2 = self.font_name.render(self.p2_name.upper(), True, C_WHITE)
+        self.screen.blit(n2, (center_p2 - n2.get_width()//2, int(self.H * 0.08)))
+        
+        # Scores
+        score_color_p1 = C_GOLD if self.game_over and self.p1_score > self.p2_score else C_WHITE
+        score_color_p2 = C_GOLD if self.game_over and self.p2_score > self.p1_score else C_WHITE
+        
+        s1 = self.font_score.render(str(self.p1_score), True, score_color_p1)
+        self.screen.blit(s1, (center_p1 - s1.get_width()//2, self.H//2 - s1.get_height()//2))
+        
+        s2 = self.font_score.render(str(self.p2_score), True, score_color_p2)
+        self.screen.blit(s2, (center_p2 - s2.get_width()//2, self.H//2 - s2.get_height()//2))
+        
+        # Serve indicator
+        if not self.game_over:
+            serve_text = self.font_serve.render("● SERVING", True, C_GOLD)
+            if self.serving == 1:
+                self.screen.blit(serve_text, (center_p1 - serve_text.get_width()//2, int(self.H * 0.78)))
+            else:
+                self.screen.blit(serve_text, (center_p2 - serve_text.get_width()//2, int(self.H * 0.78)))
+        else:
+            winner = self.p1_name if self.p1_score > self.p2_score else self.p2_name
+            win_text = self.font_title.render(f"🏆 {winner} WINS! 🏆", True, C_GOLD)
+            self.screen.blit(win_text, (self.W//2 - win_text.get_width()//2, int(self.H * 0.78)))
+        
+        # Flash effects
+        if self.flash_alpha_p1 > 0:
+            flash_surface = pygame.Surface((self.W//2, self.H))
+            flash_surface.fill(C_FLASH_P1)
+            flash_surface.set_alpha(self.flash_alpha_p1)
+            self.screen.blit(flash_surface, (0, 0))
+            self.flash_alpha_p1 = max(0, self.flash_alpha_p1 - 12)
+            
+        if self.flash_alpha_p2 > 0:
+            flash_surface = pygame.Surface((self.W//2, self.H))
+            flash_surface.fill(C_FLASH_P2)
+            flash_surface.set_alpha(self.flash_alpha_p2)
+            self.screen.blit(flash_surface, (self.W//2, 0))
+            self.flash_alpha_p2 = max(0, self.flash_alpha_p2 - 12)
+        
+        # URL display at bottom
+        url_text = self.font_url.render(f"http://{self.ip}:5000", True, C_WHITE)
+        # Dark background for URL
+        url_bg = pygame.Rect(self.W//2 - url_text.get_width()//2 - 20, int(self.H * 0.9), url_text.get_width() + 40, url_text.get_height() + 10)
+        pygame.draw.rect(self.screen, (0, 0, 0, 150), url_bg, border_radius=10)
+        self.screen.blit(url_text, (self.W//2 - url_text.get_width()//2, int(self.H * 0.9) + 5))
+        
+        # Store buttons for click handling
+        self.game_buttons = {}
+        
+        # New Game button (small, top corner)
+        btn_w = int(self.W * 0.12)
+        btn_h = int(self.H * 0.06)
+        new_rect = pygame.Rect(self.W - btn_w - 10, 10, btn_w, btn_h)
+        pygame.draw.rect(self.screen, C_ORANGE, new_rect, border_radius=5)
+        new_txt = self.font_small.render("NEW GAME", True, C_WHITE)
+        self.screen.blit(new_txt, (new_rect.centerx - new_txt.get_width()//2, new_rect.centery - new_txt.get_height()//2))
+        self.game_buttons["new_game"] = new_rect
+
+    def handle_setup_click(self, pos):
+        for key, rect in self.setup_buttons.items():
+            if rect.collidepoint(pos):
+                if key.startswith("p1_"):
+                    self.p1_name_idx = int(key.split("_")[1])
+                elif key.startswith("p2_"):
+                    self.p2_name_idx = int(key.split("_")[1])
+                elif key.startswith("pts_"):
+                    self.points_to_win = int(key.split("_")[1])
+                elif key.startswith("srv_"):
+                    self.serves_per_turn = int(key.split("_")[1])
+                elif key == "start":
+                    self.start_game()
+                return
+
+    def handle_game_click(self, pos):
+        # Only handle New Game button - no tap-to-score
+        for key, rect in self.game_buttons.items():
+            if rect.collidepoint(pos):
+                if key == "new_game":
+                    self.game_started = False
+                    self.game_over = False
+                return
+
+    def run(self):
+        # Start Flask server
+        self.start_flask()
+        
+        clock = pygame.time.Clock()
+        running = True
+        
+        print(f"\n🏓 Ping Pong Scorer Running!")
+        print(f"📱 Remote Control: http://{self.ip}:5000")
+        print(f"   Score P1: http://{self.ip}:5000/score/player1")
+        print(f"   Score P2: http://{self.ip}:5000/score/player2")
+        print()
+        
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                    
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if self.game_started:
+                        self.handle_game_click(event.pos)
+                    else:
+                        self.handle_setup_click(event.pos)
+                        
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        running = False
+                    elif event.key == pygame.K_F11:
+                        pygame.display.toggle_fullscreen()
+
+            # Draw
+            if self.game_started:
+                self.draw_game()
+            else:
+                self.draw_setup()
+                
+            pygame.display.flip()
+            clock.tick(60)
+            
+        pygame.quit()
+
+if __name__ == "__main__":
+    game = PingPongDisplay()
+    game.run()
